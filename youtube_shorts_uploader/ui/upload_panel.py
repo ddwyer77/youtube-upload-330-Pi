@@ -1,5 +1,8 @@
 import os
 import logging
+import random
+import datetime
+import uuid
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -7,9 +10,9 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QSplitter, QFrame,
     QTextEdit, QLineEdit, QComboBox, QTabWidget, QGroupBox,
     QRadioButton, QButtonGroup, QScrollArea, QSizePolicy,
-    QApplication
+    QApplication, QDialog, QDateTimeEdit
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QSize, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QSize, QTimer, QDateTime
 from PyQt6.QtGui import QIcon, QAction, QDrag, QPixmap, QFont, QImage
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
@@ -21,6 +24,79 @@ from ..core.video_processor import VideoProcessor
 from .video_preview import VideoPreview
 
 logger = logging.getLogger(__name__)
+
+
+class ScheduleOptionsDialog(QDialog):
+    """Dialog for configuring schedule options for videos"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Schedule Options")
+        self.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(self)
+        
+        # Start time
+        start_time_layout = QHBoxLayout()
+        start_time_layout.addWidget(QLabel("Start uploading at:"))
+        self.start_time_edit = QDateTimeEdit(QDateTime.currentDateTime().addSecs(300))
+        self.start_time_edit.setCalendarPopup(True)
+        self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        start_time_layout.addWidget(self.start_time_edit)
+        layout.addLayout(start_time_layout)
+        
+        # Interval
+        interval_layout = QHBoxLayout()
+        interval_layout.addWidget(QLabel("Upload interval:"))
+        self.interval_combo = QComboBox()
+        self.interval_combo.addItem("Every Hour", 1)
+        self.interval_combo.addItem("Every 2 Hours", 2)
+        self.interval_combo.addItem("Every 3 Hours", 3)
+        self.interval_combo.addItem("Every 4 Hours", 4)
+        self.interval_combo.addItem("Every 6 Hours", 6)
+        self.interval_combo.addItem("Every 12 Hours", 12)
+        self.interval_combo.addItem("Once a Day", 24)
+        self.interval_combo.addItem("Randomized Hourly", "random")
+        interval_layout.addWidget(self.interval_combo)
+        layout.addLayout(interval_layout)
+        
+        # Privacy
+        privacy_layout = QHBoxLayout()
+        privacy_layout.addWidget(QLabel("Privacy status:"))
+        self.privacy_combo = QComboBox()
+        self.privacy_combo.addItem("Unlisted", "unlisted")
+        self.privacy_combo.addItem("Public", "public")
+        self.privacy_combo.addItem("Private", "private")
+        privacy_layout.addWidget(self.privacy_combo)
+        layout.addLayout(privacy_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+        
+        ok_button = QPushButton("Schedule")
+        ok_button.clicked.connect(self.accept)
+        ok_button.setDefault(True)
+        button_layout.addWidget(ok_button)
+        
+        layout.addLayout(button_layout)
+        
+    def get_start_time(self):
+        """Get the selected start time"""
+        return self.start_time_edit.dateTime().toPyDateTime()
+        
+    def get_interval_type(self):
+        """Get the selected interval type"""
+        return self.interval_combo.currentData()
+        
+    def get_privacy_status(self):
+        """Get the selected privacy status"""
+        return self.privacy_combo.currentData()
+
 
 class UploadWorker(QThread):
     """Worker thread for uploading videos in the background."""
@@ -287,11 +363,40 @@ class UploadPanel(QWidget):
         selection_group = QGroupBox("Video Selection")
         selection_layout = QVBoxLayout()
         
-        # Add file button
-        self.add_button = QPushButton("Select Video Files")
-        self.add_button.setIcon(QIcon.fromTheme("document-open"))
+        # Top buttons row
+        buttons_layout = QHBoxLayout()
+        
+        # Add video button
+        self.add_button = QPushButton("Add Videos")
         self.add_button.clicked.connect(self._on_add_videos)
-        selection_layout.addWidget(self.add_button)
+        buttons_layout.addWidget(self.add_button)
+        
+        # Remove video button
+        self.remove_button = QPushButton("Remove")
+        self.remove_button.clicked.connect(self._remove_selected_videos)
+        buttons_layout.addWidget(self.remove_button)
+        
+        # Select all button
+        self.select_all_button = QPushButton("Select All")
+        self.select_all_button.clicked.connect(self._select_all_videos)
+        buttons_layout.addWidget(self.select_all_button)
+
+        # Spacer to push upload and schedule buttons to the right
+        buttons_layout.addStretch()
+        
+        # Schedule selected videos button
+        self.schedule_button = QPushButton("Schedule Selected")
+        self.schedule_button.clicked.connect(self._on_schedule_selected)
+        self.schedule_button.setEnabled(False)
+        buttons_layout.addWidget(self.schedule_button)
+        
+        # Upload button
+        self.upload_button = QPushButton("Upload Selected")
+        self.upload_button.clicked.connect(self._on_start_upload)
+        self.upload_button.setEnabled(False)
+        buttons_layout.addWidget(self.upload_button)
+        
+        selection_layout.addLayout(buttons_layout)
         
         # Video list
         self.video_list = QListWidget()
@@ -303,15 +408,6 @@ class UploadPanel(QWidget):
         self.video_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.video_list.customContextMenuRequested.connect(self._show_context_menu)
         
-        # Video list controls
-        video_controls_layout = QHBoxLayout()
-        video_controls_layout.addWidget(QLabel("Selected Videos:"))
-        
-        self.select_all_button = QPushButton("Select All")
-        self.select_all_button.clicked.connect(self._select_all_videos)
-        video_controls_layout.addWidget(self.select_all_button)
-        
-        selection_layout.addLayout(video_controls_layout)
         selection_layout.addWidget(self.video_list)
         
         selection_group.setLayout(selection_layout)
@@ -343,11 +439,6 @@ class UploadPanel(QWidget):
         self.status_label = QLabel("Ready to upload")
         upload_layout.addWidget(self.status_label)
         
-        # Upload button
-        self.upload_button = QPushButton("Upload to YouTube")
-        self.upload_button.setIcon(QIcon.fromTheme("network-transmit"))
-        self.upload_button.clicked.connect(self._on_start_upload)
-        self.upload_button.setEnabled(False)
         upload_layout.addWidget(self.upload_button)
         
         upload_group.setLayout(upload_layout)
@@ -741,6 +832,26 @@ class UploadPanel(QWidget):
         logger.info(f"Started metadata generation for {video_path}")
         self.status_label.setText(f"Generating metadata for {os.path.basename(video_path)}...")
     
+    def _store_metadata_in_item(self, item, metadata):
+        """Store metadata in a list item for later use in scheduling"""
+        if not item or not metadata:
+            return
+            
+        # Create a copy of the metadata to avoid reference issues
+        metadata_copy = metadata.copy() if metadata else {}
+        
+        # Store as a property of the item
+        item.metadata = metadata_copy
+        
+        # Update item display with title if available
+        if 'title' in metadata_copy:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            file_name = os.path.basename(file_path)
+            item.setText(f"{file_name} - {metadata_copy['title']}")
+            item.setToolTip(metadata_copy['title'])
+            
+        logger.debug(f"Stored metadata in item: {metadata_copy.get('title', 'No title')}")
+
     def _generate_metadata_for_multiple(self, items, style_prompt):
         """
         Generate metadata for multiple videos.
@@ -789,9 +900,8 @@ class UploadPanel(QWidget):
                     new_title = self._clean_title(metadata['title'])
                     metadata['title'] = new_title
                     
-                    # Display the title in the item
-                    item.setText(f"{file_name} - {new_title}")
-                    item.setToolTip(new_title)
+                    # Store metadata in the item
+                    self._store_metadata_in_item(item, metadata)
                     
                     logger.info(f"Generated metadata for {file_name}: {new_title}")
                 
@@ -841,6 +951,11 @@ class UploadPanel(QWidget):
         self.title_edit.setText(metadata.get('title', ''))
         self.description_edit.setText(metadata.get('description', ''))
         self.tags_edit.setText(', '.join(metadata.get('hashtags', [])))
+        
+        # Store metadata in the current list item
+        current_item = self.video_list.currentItem()
+        if current_item:
+            self._store_metadata_in_item(current_item, metadata)
         
         # Show detected objects
         labels = metadata.get('labels', [])
@@ -928,18 +1043,28 @@ class UploadPanel(QWidget):
     def _update_upload_button_state(self):
         """Update the state of the upload button based on selection and metadata."""
         selected_items = self.video_list.selectedItems()
-        if not selected_items:
-            self.upload_button.setEnabled(False)
-            return
-            
+        has_selection = len(selected_items) > 0
+        
         # For single selection, require title
         if len(selected_items) == 1:
             has_title = bool(self.title_edit.text().strip())
             self.upload_button.setEnabled(has_title)
-        else:
-            # Multiple selection is not supported for upload
-            self.upload_button.setEnabled(False)
             
+            # Also enable schedule button if there's a selection
+            self.schedule_button.setEnabled(has_selection)
+        else:
+            # Multiple selection
+            if has_selection:
+                # Enable schedule button for multiple selections
+                self.schedule_button.setEnabled(True)
+                
+                # Upload button only enabled if we have multiple items with titles
+                self.upload_button.setEnabled(False)
+            else:
+                # No selection
+                self.upload_button.setEnabled(False)
+                self.schedule_button.setEnabled(False)
+                
         # Update generate button state
         has_api_key = self.video_processor is not None and hasattr(self.video_processor, 'openai_api_key') and self.video_processor.openai_api_key is not None
         self.generate_button.setEnabled(bool(selected_items) and has_api_key)
@@ -948,3 +1073,202 @@ class UploadPanel(QWidget):
         """Select all videos in the list and enable the generate button."""
         self.video_list.selectAll()
         self.generate_button.setEnabled(True)
+
+    def _on_schedule_selected(self):
+        """Transfer selected videos to the scheduler panel"""
+        
+        selected_items = self.video_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Videos Selected", "Please select videos to schedule.")
+            return
+            
+        # Get parent window to access account manager and scheduler
+        parent = self.parent()
+        while parent and not hasattr(parent, 'account_manager'):
+            parent = parent.parent()
+            
+        if not parent or not hasattr(parent, 'account_manager'):
+            QMessageBox.warning(self, "Account Manager Not Found", "Could not access account information.")
+            return
+            
+        # Get account list
+        accounts = parent.account_manager.get_accounts()
+        if not accounts:
+            QMessageBox.warning(self, "No Accounts", "Please add and authenticate a YouTube account first.")
+            return
+            
+        # Show schedule options dialog
+        schedule_dialog = ScheduleOptionsDialog(self)
+        if schedule_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+            
+        # Get scheduling options from dialog
+        start_time = schedule_dialog.get_start_time()
+        interval_type = schedule_dialog.get_interval_type()  # 'hourly', 'random', or a number of hours
+        privacy_status = schedule_dialog.get_privacy_status()
+        
+        # Get account ID - use first authenticated account
+        account_id = None
+        for account in accounts:
+            if account.get('authenticated', False):
+                account_id = account.get('id')
+                break
+                
+        if not account_id:
+            QMessageBox.warning(self, "No Authenticated Accounts", 
+                              "Please authenticate a YouTube account in the Accounts tab.")
+            return
+        
+        # Convert interval type to parameters for scheduler
+        if interval_type == 'random':
+            interval_hours = 1
+            randomized_hourly = True
+        else:
+            try:
+                interval_hours = int(interval_type)
+                randomized_hourly = False
+            except ValueError:
+                interval_hours = 1
+                randomized_hourly = False
+                
+        # Process each selected video
+        scheduled_count = 0
+        current_time = start_time
+        
+        for item in selected_items:
+            try:
+                # Get video path from item data
+                file_path = item.data(Qt.ItemDataRole.UserRole)
+                if not file_path or not os.path.exists(file_path):
+                    continue
+                    
+                # Get metadata if available (from item data or current_metadata)
+                if hasattr(item, 'metadata') and item.metadata:
+                    metadata = item.metadata
+                elif self.current_metadata and self.video_list.currentItem() == item:
+                    metadata = self.current_metadata
+                else:
+                    # No metadata, use filename as title
+                    metadata = {
+                        'title': os.path.basename(file_path),
+                        'description': '',
+                        'hashtags': []
+                    }
+                    
+                # Extract title and description from metadata or UI
+                title = metadata.get('title', os.path.basename(file_path))
+                description = metadata.get('description', '')
+                tags = metadata.get('hashtags', [])
+                
+                # If we have UI fields and this is the current item, use those values instead
+                if self.video_list.currentItem() == item and hasattr(self, 'title_edit'):
+                    title = self.title_edit.text() or title
+                    description = self.description_edit.toPlainText() or description
+                    if hasattr(self, 'tags_edit'):
+                        tags_text = self.tags_edit.text()
+                        if tags_text:
+                            tags = [tag.strip() for tag in tags_text.split(',')]
+                
+                # Create upload data
+                upload_id = str(uuid.uuid4())
+                upload_data = {
+                    "id": upload_id,
+                    "file_path": file_path,
+                    "account_id": account_id,
+                    "scheduled_time": current_time.isoformat(),
+                    "title": title,
+                    "description": description,
+                    "tags": tags,
+                    "privacy_status": privacy_status,
+                    "uploaded": False,
+                    "cancelled": False,
+                    "randomized": randomized_hourly
+                }
+                
+                # Add to scheduler directly
+                if parent and hasattr(parent, 'scheduler'):
+                    scheduler = parent.scheduler
+                    
+                    # Add to scheduler's queue and scheduled videos list
+                    with scheduler.lock:
+                        scheduler.scheduled_videos.append(upload_data)
+                        scheduler.upload_queue.put((current_time.timestamp(), upload_data))
+                        
+                    # Increment counter
+                    scheduled_count += 1
+                    
+                    # Update time for next video
+                    if randomized_hourly:
+                        # Add 60-70 minutes (random)
+                        random_minutes = random.randint(60, 70)
+                        current_time += datetime.timedelta(minutes=random_minutes)
+                    else:
+                        # Standard interval
+                        current_time += datetime.timedelta(hours=interval_hours)
+                else:
+                    QMessageBox.warning(self, "Scheduler Not Found", "Could not access the scheduler. Please try again.")
+                    return
+                    
+            except Exception as e:
+                logger.error(f"Error scheduling video: {str(e)}")
+                
+        # Save the schedule
+        if parent and hasattr(parent, 'scheduler'):
+            parent.scheduler._save_schedule()
+            
+            # Switch to schedule tab to show the newly scheduled videos
+            if hasattr(parent, '_change_page') and callable(parent._change_page):
+                try:
+                    parent._change_page(3)  # Assuming schedule page is index 3
+                except Exception as e:
+                    logger.error(f"Error switching to schedule tab: {str(e)}")
+                
+            # Refresh the schedule panel
+            schedule_panel = None
+            for child in parent.findChildren(QWidget):
+                if hasattr(child, 'refresh_schedule') and callable(child.refresh_schedule):
+                    schedule_panel = child
+                    break
+                    
+            if schedule_panel:
+                schedule_panel.refresh_schedule()
+                    
+        # Show success message
+        if scheduled_count > 0:
+            QMessageBox.information(
+                self,
+                "Videos Scheduled",
+                f"{scheduled_count} videos have been scheduled for upload starting at {start_time.strftime('%Y-%m-%d %H:%M')}."
+            )
+
+    def _remove_selected_videos(self):
+        """Remove selected videos from the queue"""
+        selected_items = self.video_list.selectedItems()
+        if not selected_items:
+            return
+            
+        # Confirm with user if multiple items selected
+        if len(selected_items) > 1:
+            result = QMessageBox.question(
+                self,
+                "Confirm Removal",
+                f"Remove {len(selected_items)} videos from the queue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if result != QMessageBox.StandardButton.Yes:
+                return
+                
+        # Remove selected items
+        for item in selected_items:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            row = self.video_list.row(item)
+            
+            # Remove from list widget
+            self.video_list.takeItem(row)
+            
+            # Remove from queue
+            if file_path in self.video_queue:
+                self.video_queue.remove(file_path)
+                
+        self.status_label.setText(f"Removed {len(selected_items)} videos from queue")

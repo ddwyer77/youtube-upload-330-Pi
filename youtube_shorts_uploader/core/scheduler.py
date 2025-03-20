@@ -5,6 +5,7 @@ import logging
 import threading
 import datetime
 import queue
+import random
 from pathlib import Path
 import glob
 import uuid
@@ -48,6 +49,9 @@ class UploadScheduler:
         self.scheduled_videos = []
         self._load_schedule()
         
+        # Start the scheduler thread
+        self._ensure_scheduler_running()
+        
         logger.info("Upload scheduler initialized")
     
     def _load_schedule(self):
@@ -60,7 +64,7 @@ class UploadScheduler:
                     
                     # Add items to queue
                     for video in self.scheduled_videos:
-                        if not video.get('uploaded', False):
+                        if not video.get('uploaded', False) and not video.get('cancelled', False):
                             # Calculate priority based on scheduled time
                             scheduled_time = datetime.datetime.fromisoformat(video.get('scheduled_time'))
                             priority = scheduled_time.timestamp()
@@ -83,7 +87,7 @@ class UploadScheduler:
             logger.error(f"Failed to save schedule: {str(e)}")
             return False
     
-    def import_folder(self, folder_path, account_id, interval_hours=1, start_time=None):
+    def import_folder(self, folder_path, account_id, interval_hours=1, start_time=None, randomized_hourly=False, privacy_status="unlisted"):
         """
         Import videos from a folder and schedule them for upload.
         
@@ -92,6 +96,8 @@ class UploadScheduler:
             account_id (str): ID of the account to use for uploads
             interval_hours (int): Hours between uploads
             start_time (datetime): Starting time for first upload
+            randomized_hourly (bool): If True, add random minutes to hourly schedule
+            privacy_status (str): Privacy status for uploads ('unlisted' or 'public')
             
         Returns:
             int: Number of videos imported and scheduled
@@ -133,6 +139,14 @@ class UploadScheduler:
         # Use current time if start_time not specified
         if start_time is None:
             start_time = datetime.datetime.now() + datetime.timedelta(minutes=5)
+        
+        # Make sure start_time is in the future
+        now = datetime.datetime.now()
+        if start_time < now:
+            logger.warning(f"Start time {start_time.isoformat()} is in the past, adjusting to now + 5 minutes")
+            start_time = now + datetime.timedelta(minutes=5)
+        
+        logger.info(f"Scheduling uploads starting at {start_time.isoformat()}")
             
         # Process each video
         count = 0
@@ -163,17 +177,28 @@ class UploadScheduler:
                     "title": video_data.get('title', os.path.basename(file_path)),
                     "description": video_data.get('description', ""),
                     "tags": video_data.get('hashtags', []),
+                    "privacy_status": privacy_status,
                     "uploaded": False,
-                    "cancelled": False
+                    "cancelled": False,
+                    "randomized": randomized_hourly
                 }
                 
                 # Add to queue and schedule
-                self.scheduled_videos.append(upload_data)
-                self.upload_queue.put((current_time.timestamp(), upload_data))
-                logger.info(f"Scheduled upload for {os.path.basename(file_path)} at {current_time.isoformat()}")
+                with self.lock:
+                    self.scheduled_videos.append(upload_data)
+                    self.upload_queue.put((current_time.timestamp(), upload_data))
+                logger.info(f"Scheduled upload for {os.path.basename(file_path)} at {current_time.isoformat()} with privacy: {privacy_status}")
                 
-                # Move to next time slot
-                current_time += datetime.timedelta(hours=interval_hours)
+                # Calculate next time slot
+                if randomized_hourly:
+                    # Add 60-70 minutes (random value just over an hour)
+                    random_minutes = random.randint(60, 70)
+                    current_time += datetime.timedelta(minutes=random_minutes)
+                    logger.info(f"Using randomized interval of {random_minutes} minutes for next upload")
+                else:
+                    # Standard interval
+                    current_time += datetime.timedelta(hours=interval_hours)
+                
                 count += 1
                 
             except Exception as e:
@@ -202,22 +227,93 @@ class UploadScheduler:
         Cancel a scheduled video upload.
         
         Args:
-            video_id (str): ID of the scheduled video to cancel
+            video_id: The ID of the scheduled video.
             
         Returns:
-            bool: True if video was cancelled, False otherwise
+            bool: True if successful, False otherwise.
         """
         with self.lock:
-            for i, video in enumerate(self.scheduled_videos):
-                if video['id'] == video_id and not video['uploaded']:
-                    # Mark as cancelled but keep in history
-                    self.scheduled_videos[i]['cancelled'] = True
-                    self._save_schedule()
-                    logger.info(f"Cancelled scheduled upload for {video['file_path']}")
-                    return True
+            # Get the list of scheduled videos
+            videos = self.scheduled_videos.copy()
             
-            logger.warning(f"No scheduled video found with ID {video_id}")
+            # Find the video with the given ID
+            for i, video in enumerate(videos):
+                if video.get('id') == video_id:
+                    # Mark as cancelled
+                    videos[i]['cancelled'] = True
+                    self.scheduled_videos = videos
+                    self._save_schedule()
+                    logger.info(f"Cancelled scheduled upload for video with ID: {video_id}")
+                    return True
+                    
+            logger.warning(f"No scheduled video found with ID: {video_id}")
             return False
+            
+    def update_video_metadata(self, video_id, title=None, description=None, tags=None):
+        """
+        Update the metadata of a scheduled video.
+        
+        Args:
+            video_id: The ID of the scheduled video.
+            title: The new title for the video.
+            description: The new description for the video.
+            tags: The new tags for the video.
+            
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        with self.lock:
+            # Get the list of scheduled videos
+            videos = self.scheduled_videos.copy()
+            
+            # Find the video with the given ID
+            for i, video in enumerate(videos):
+                if video.get('id') == video_id:
+                    # Update metadata
+                    if title is not None:
+                        videos[i]['title'] = title
+                    if description is not None:
+                        videos[i]['description'] = description
+                    if tags is not None:
+                        videos[i]['tags'] = tags
+                        
+                    self.scheduled_videos = videos
+                    self._save_schedule()
+                    logger.info(f"Updated metadata for scheduled video with ID: {video_id}")
+                    return True
+                    
+            logger.warning(f"No scheduled video found with ID: {video_id}")
+            return False
+    
+    def clear_all_scheduled_videos(self):
+        """
+        Clear all scheduled videos that haven't been uploaded yet.
+        
+        Returns:
+            int: Number of videos cleared
+        """
+        with self.lock:
+            # Count how many videos are pending
+            pending_count = sum(1 for video in self.scheduled_videos 
+                              if not video.get('uploaded', False) and not video.get('cancelled', False))
+            
+            # Keep only videos that have been uploaded or already cancelled
+            self.scheduled_videos = [video for video in self.scheduled_videos 
+                                   if video.get('uploaded', False) or video.get('cancelled', False)]
+            
+            # Clear the upload queue
+            while not self.upload_queue.empty():
+                try:
+                    self.upload_queue.get_nowait()
+                    self.upload_queue.task_done()
+                except queue.Empty:
+                    break
+                    
+            # Save the schedule
+            self._save_schedule()
+            
+            logger.info(f"Cleared {pending_count} pending scheduled videos")
+            return pending_count
     
     def _ensure_scheduler_running(self):
         """Make sure the scheduler thread is running"""
@@ -247,15 +343,35 @@ class UploadScheduler:
                         
                         # Double-check it hasn't been cancelled
                         cancelled = False
-                        for scheduled_video in self.scheduled_videos:
-                            if scheduled_video['id'] == video['id']:
-                                if scheduled_video.get('cancelled', False):
-                                    cancelled = True
-                                break
+                        video_index = -1
+                        
+                        with self.lock:
+                            for i, scheduled_video in enumerate(self.scheduled_videos):
+                                if scheduled_video['id'] == video['id']:
+                                    if scheduled_video.get('cancelled', False):
+                                        cancelled = True
+                                    video_index = i
+                                    break
                         
                         if not cancelled:
                             # Process the upload
-                            self._process_upload(video)
+                            success, result = self._process_upload(video)
+                            
+                            # Update the video status in the scheduled_videos list
+                            if video_index >= 0:
+                                with self.lock:
+                                    if success:
+                                        self.scheduled_videos[video_index]['uploaded'] = True
+                                        self.scheduled_videos[video_index]['video_id'] = result
+                                        logger.info(f"Marked video {video['id']} as uploaded with YouTube ID: {result}")
+                                    else:
+                                        self.scheduled_videos[video_index]['error'] = result
+                                        logger.error(f"Upload failed for video {video['id']}: {result}")
+                                    
+                                    # Save the updated schedule
+                                    self._save_schedule()
+                        else:
+                            logger.info(f"Skipping cancelled upload for video {video['id']}")
                         
                         # Mark task as done
                         self.upload_queue.task_done()
@@ -280,7 +396,7 @@ class UploadScheduler:
         file_path = video.get('file_path')
         account_id = video.get('account_id')
         
-        logger.info(f"Processing upload for {file_path}")
+        logger.info(f"Processing scheduled upload for {file_path}")
         
         try:
             # Check if file exists
@@ -330,25 +446,28 @@ class UploadScheduler:
                 description = description or video_data.get('description', "")
                 tags = tags or video_data.get('hashtags', [])
             
+            # Log the upload attempt
+            logger.info(f"Uploading scheduled video: {title}")
+            
             # Upload the video
             response = youtube_api.upload_video(
                 file_path,
                 title,
                 description,
                 tags=tags,
-                privacy_status=account.get('default_privacy', 'unlisted')
+                privacy_status=video.get('privacy_status', 'unlisted')
             )
             
             if response and 'id' in response:
                 video_id = response['id']
-                logger.info(f"Successfully uploaded {file_path} as {video_id}")
+                logger.info(f"Successfully uploaded scheduled video {file_path} as {video_id}")
                 return True, video_id
             else:
-                logger.error(f"Upload failed for {file_path}, no video ID returned")
+                logger.error(f"Scheduled upload failed for {file_path}, no video ID returned")
                 return False, "No video ID returned"
                 
         except Exception as e:
-            logger.error(f"Error during upload process: {str(e)}")
+            logger.error(f"Error during scheduled upload process: {str(e)}")
             return False, str(e)
     
     def stop(self):

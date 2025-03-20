@@ -172,8 +172,9 @@ class MainWindow(QMainWindow):
         )
         
         self.schedule_panel = SchedulePanel(
-            self.account_manager,
-            self.scheduler
+            account_manager=self.account_manager,
+            scheduler=self.scheduler,
+            video_processor=self.video_processor
         )
         
         self.accounts_panel = AccountsPanel(

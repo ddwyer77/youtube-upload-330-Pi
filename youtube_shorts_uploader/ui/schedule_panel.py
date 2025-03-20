@@ -256,6 +256,12 @@ class SchedulePanel(QWidget):
                 f"An error occurred while scheduling videos: {str(e)}"
             )
     
+    def _clean_title(self, title):
+        """Remove quotation marks from a title."""
+        if not title:
+            return title
+        return title.replace('"', '').replace("'", "").strip()
+        
     def auto_apply_ai_metadata(self):
         """Apply AI-generated title and description to all pending scheduled videos"""
         if not self.video_processor:
@@ -332,8 +338,8 @@ class SchedulePanel(QWidget):
                 )
                 
                 if video_data and 'title' in video_data:
-                    # Update the scheduled video with the new metadata
-                    title = video_data.get('title')
+                    # Clean the title (remove quotation marks)
+                    title = self._clean_title(video_data.get('title'))
                     description = video_data.get('description', '')
                     tags = video_data.get('hashtags', [])
                     

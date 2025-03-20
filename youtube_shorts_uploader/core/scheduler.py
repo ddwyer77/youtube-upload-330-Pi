@@ -87,6 +87,12 @@ class UploadScheduler:
             logger.error(f"Failed to save schedule: {str(e)}")
             return False
     
+    def _clean_title(self, title):
+        """Remove quotation marks from a title."""
+        if not title:
+            return title
+        return title.replace('"', '').replace("'", "").strip()
+    
     def import_folder(self, folder_path, account_id, interval_hours=1, start_time=None, randomized_hourly=False, privacy_status="unlisted"):
         """
         Import videos from a folder and schedule them for upload.
@@ -166,6 +172,10 @@ class UploadScheduler:
                     max_title_length=100,
                     style_prompt=style_prompt
                 )
+                
+                # Clean the title (remove quotation marks)
+                if 'title' in video_data:
+                    video_data['title'] = self._clean_title(video_data['title'])
                 
                 # Create a scheduled upload entry
                 upload_id = str(uuid.uuid4())
@@ -429,6 +439,10 @@ class UploadScheduler:
             description = video.get('description')
             tags = video.get('tags', [])
             
+            # Clean title (remove quotation marks)
+            if title:
+                title = self._clean_title(title)
+            
             # If title or description is missing, try to generate them
             if not title or not description:
                 logger.info(f"Generating metadata for {file_path}")
@@ -442,7 +456,7 @@ class UploadScheduler:
                     style_prompt=style_prompt
                 )
                 
-                title = title or video_data.get('title', os.path.basename(file_path))
+                title = title or self._clean_title(video_data.get('title', os.path.basename(file_path)))
                 description = description or video_data.get('description', "")
                 tags = tags or video_data.get('hashtags', [])
             

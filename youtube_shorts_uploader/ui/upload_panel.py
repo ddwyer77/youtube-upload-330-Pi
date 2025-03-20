@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QProgressBar, QMenu,
     QFileDialog, QMessageBox, QSplitter, QFrame,
     QTextEdit, QLineEdit, QComboBox, QTabWidget, QGroupBox,
-    QRadioButton, QButtonGroup, QScrollArea, QSizePolicy
+    QRadioButton, QButtonGroup, QScrollArea, QSizePolicy,
+    QApplication
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QSize, QTimer
 from PyQt6.QtGui import QIcon, QAction, QDrag, QPixmap, QFont, QImage
@@ -297,11 +298,20 @@ class UploadPanel(QWidget):
         self.video_list.setMinimumHeight(150)
         self.video_list.setDragDropMode(QListWidget.DragDropMode.DragDrop)
         self.video_list.setAcceptDrops(True)
-        self.video_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.video_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.video_list.itemClicked.connect(self._on_video_selected)
         self.video_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.video_list.customContextMenuRequested.connect(self._show_context_menu)
-        selection_layout.addWidget(QLabel("Selected Videos:"))
+        
+        # Video list controls
+        video_controls_layout = QHBoxLayout()
+        video_controls_layout.addWidget(QLabel("Selected Videos:"))
+        
+        self.select_all_button = QPushButton("Select All")
+        self.select_all_button.clicked.connect(self._select_all_videos)
+        video_controls_layout.addWidget(self.select_all_button)
+        
+        selection_layout.addLayout(video_controls_layout)
         selection_layout.addWidget(self.video_list)
         
         selection_group.setLayout(selection_layout)
@@ -511,10 +521,19 @@ class UploadPanel(QWidget):
         Args:
             item (QListWidgetItem): The selected list item.
         """
-        file_path = item.data(Qt.ItemDataRole.UserRole)
-        self.video_preview.load_video(file_path)
-        self.status_label.setText(f"Selected: {os.path.basename(file_path)}")
-        self._update_upload_button_state()
+        if self.video_list.selectedItems():
+            selected_items = self.video_list.selectedItems()
+            if len(selected_items) == 1:
+                # Single selection - show preview
+                file_path = selected_items[0].data(Qt.ItemDataRole.UserRole)
+                self.video_preview.load_video(file_path)
+                self.status_label.setText(f"Selected: {os.path.basename(file_path)}")
+            else:
+                # Multiple selection
+                self.video_preview.clear()
+                self.status_label.setText(f"Selected {len(selected_items)} videos")
+            
+            self._update_upload_button_state()
     
     def _show_context_menu(self, position):
         """
@@ -682,29 +701,123 @@ class UploadPanel(QWidget):
         self.config_updated.emit({"privacy_status": privacy})
     
     def _generate_metadata(self):
-        """Generate metadata for the selected video using AI."""
-        if not self.video_list.currentItem():
+        """Generate metadata using AI for the selected video(s)."""
+        selected_items = self.video_list.selectedItems()
+        
+        if not selected_items:
+            QMessageBox.warning(self, "No Video Selected", "Please select video(s) first.")
             return
             
-        video_path = self.video_list.currentItem().data(Qt.ItemDataRole.UserRole)
-        if not video_path:
+        style_prompt = self.style_prompt_input.toPlainText().strip()
+        
+        # Save style prompt to config
+        if style_prompt:
+            self.config_manager.set("style_prompt", style_prompt)
+            self.config_manager.save()
+            logger.info(f"Saved style prompt to settings: {style_prompt}")
+        
+        # Handle multiple selection
+        if len(selected_items) > 1:
+            self._generate_metadata_for_multiple(selected_items, style_prompt)
             return
             
-        # Prepare UI for generation
+        # Single video processing
         self.generate_button.setEnabled(False)
-        self.generation_progress.setValue(0)
         self.generation_progress.setVisible(True)
-        self.status_label.setText("Generating metadata...")
+        self.generation_progress.setValue(10)  # Show some initial progress
         
-        # Get style prompt from the input field
-        style_prompt = self.style_prompt_input.toPlainText()
-        logger.info(f"Using style prompt for metadata generation: {style_prompt}")
+        video_path = selected_items[0].data(Qt.ItemDataRole.UserRole)
         
-        # Start generation in a separate thread
-        self.metadata_worker = MetadataGenerationWorker(video_path, self.video_processor, style_prompt)
+        # Create worker thread for metadata generation
+        self.metadata_worker = MetadataGenerationWorker(
+            video_path, 
+            self.video_processor,
+            style_prompt
+        )
         self.metadata_worker.generation_completed.connect(self.metadata_generation_completed)
         self.metadata_worker.progress_updated.connect(self.generation_progress.setValue)
         self.metadata_worker.start()
+        
+        logger.info(f"Started metadata generation for {video_path}")
+        self.status_label.setText(f"Generating metadata for {os.path.basename(video_path)}...")
+    
+    def _generate_metadata_for_multiple(self, items, style_prompt):
+        """
+        Generate metadata for multiple videos.
+        
+        Args:
+            items (list): List of QListWidgetItems
+            style_prompt (str): Style prompt for AI
+        """
+        # Confirm with the user
+        result = QMessageBox.question(
+            self,
+            "Process Multiple Videos",
+            f"Generate AI metadata for {len(items)} videos? This may take a while.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if result != QMessageBox.StandardButton.Yes:
+            return
+            
+        # Process videos one by one
+        self.generate_button.setEnabled(False)
+        self.generation_progress.setVisible(True)
+        total_videos = len(items)
+        
+        for i, item in enumerate(items):
+            video_path = item.data(Qt.ItemDataRole.UserRole)
+            file_name = os.path.basename(video_path)
+            
+            # Update progress
+            progress = int((i / total_videos) * 100)
+            self.generation_progress.setValue(progress)
+            self.status_label.setText(f"Processing {i+1}/{total_videos}: {file_name}")
+            
+            try:
+                # Process the video
+                metadata = self.video_processor.process_video(
+                    video_path,
+                    sample_interval=5,
+                    max_title_length=100,
+                    style_prompt=style_prompt
+                )
+                
+                # Update the item with the new title
+                if metadata and 'title' in metadata:
+                    # Clean title (remove quotation marks)
+                    new_title = self._clean_title(metadata['title'])
+                    metadata['title'] = new_title
+                    
+                    # Display the title in the item
+                    item.setText(f"{file_name} - {new_title}")
+                    item.setToolTip(new_title)
+                    
+                    logger.info(f"Generated metadata for {file_name}: {new_title}")
+                
+                # Process events to keep UI responsive
+                QApplication.processEvents()
+                
+            except Exception as e:
+                logger.error(f"Error generating metadata for {file_name}: {str(e)}")
+        
+        # Final update
+        self.generation_progress.setValue(100)
+        self.status_label.setText(f"Completed metadata generation for {total_videos} videos")
+        self.generate_button.setEnabled(True)
+        
+        # Show completion message
+        QMessageBox.information(
+            self,
+            "Metadata Generation Complete",
+            f"Generated metadata for {total_videos} videos."
+        )
+    
+    def _clean_title(self, title):
+        """Remove quotation marks from a title."""
+        if not title:
+            return title
+        return title.replace('"', '').replace("'", "").strip()
     
     def metadata_generation_completed(self, metadata):
         """Handle completion of metadata generation."""
@@ -719,6 +832,10 @@ class UploadPanel(QWidget):
             
         # Store metadata
         self.current_metadata = metadata
+        
+        # Clean the title (remove quotation marks)
+        if 'title' in metadata:
+            metadata['title'] = self._clean_title(metadata['title'])
         
         # Update UI with generated metadata
         self.title_edit.setText(metadata.get('title', ''))
@@ -762,6 +879,9 @@ class UploadPanel(QWidget):
         alternatives = metadata.get('alternatives', [])
         if alternatives:
             for i, alt in enumerate(alternatives):
+                # Clean titles in alternatives too
+                if 'title' in alt:
+                    alt['title'] = self._clean_title(alt['title'])
                 self.variations_combo.addItem(f"Variation {i+1}")
             self.variations_combo.setEnabled(True)
         else:
@@ -806,13 +926,25 @@ class UploadPanel(QWidget):
             ))
 
     def _update_upload_button_state(self):
-        """Update the upload button state based on selected video and required metadata."""
-        video_selected = self.video_list.currentItem() is not None
-        title_provided = bool(self.title_edit.text().strip())
-        
-        # Enable button if both video is selected and title is provided
-        self.upload_button.setEnabled(video_selected and title_provided)
-        
-        # Also update the generate button state
+        """Update the state of the upload button based on selection and metadata."""
+        selected_items = self.video_list.selectedItems()
+        if not selected_items:
+            self.upload_button.setEnabled(False)
+            return
+            
+        # For single selection, require title
+        if len(selected_items) == 1:
+            has_title = bool(self.title_edit.text().strip())
+            self.upload_button.setEnabled(has_title)
+        else:
+            # Multiple selection is not supported for upload
+            self.upload_button.setEnabled(False)
+            
+        # Update generate button state
         has_api_key = self.video_processor is not None and hasattr(self.video_processor, 'openai_api_key') and self.video_processor.openai_api_key is not None
-        self.generate_button.setEnabled(video_selected and has_api_key)
+        self.generate_button.setEnabled(bool(selected_items) and has_api_key)
+
+    def _select_all_videos(self):
+        """Select all videos in the list and enable the generate button."""
+        self.video_list.selectAll()
+        self.generate_button.setEnabled(True)

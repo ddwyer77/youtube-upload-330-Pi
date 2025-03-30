@@ -14,50 +14,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QSize, QTimer, QDateTime
 from PyQt6.QtGui import QIcon, QAction, QDrag, QPixmap, QFont, QImage
-# PATCHED: # PATCHED: from PyQt6.QtMultimedia import QMediaPlayer
-# PATCHED: # PATCHED: from PyQt6.QtMultimediaWidgets import QVideoWidget
-# Mock classes to replace multimedia classes
-class QMediaPlayer:
-    def __init__(self, parent=None):
-        self.parent = parent
-    
-    def setVideoOutput(self, *args, **kwargs):
-        pass
-    
-    def play(self, *args, **kwargs):
-        pass
-    
-    def pause(self, *args, **kwargs):
-        pass
-    
-    def stop(self, *args, **kwargs):
-        pass
-# Mock classes to replace multimedia classes
-class QMediaPlayer:
-    def __init__(self, parent=None):
-        self.parent = parent
-    
-    def setVideoOutput(self, *args, **kwargs):
-        pass
-    
-    def play(self, *args, **kwargs):
-        pass
-    
-    def pause(self, *args, **kwargs):
-        pass
-    
-    def stop(self, *args, **kwargs):
-        pass
-
-class QVideoWidget:
-    def __init__(self, parent=None):
-        self.parent = parent
-
-
-class QVideoWidget:
-    def __init__(self, parent=None):
-        self.parent = parent
-
+from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 from ..utils.config_manager import ConfigManager
 from ..core.youtube_api import YouTubeAPI

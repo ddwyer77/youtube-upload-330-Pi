@@ -79,7 +79,7 @@ def manual_auth():
         # Run the flow
         print("Starting OAuth flow...")
         credentials = flow.run_local_server(
-            port=8080,
+            port=8090,
             prompt="consent",
             open_browser=True
         )

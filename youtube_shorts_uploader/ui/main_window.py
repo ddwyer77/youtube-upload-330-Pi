@@ -170,6 +170,8 @@ class MainWindow(QMainWindow):
             self.video_processor,
             self.config_manager
         )
+        # Set scheduler reference in upload panel
+        self.upload_panel.scheduler = self.scheduler
         
         self.schedule_panel = SchedulePanel(
             account_manager=self.account_manager,

@@ -1,81 +1,154 @@
-# YouTube Shorts Uploader
+# YouTube Shorts Uploader for Raspberry Pi
 
-A desktop application for uploading shorts to YouTube with AI-generated metadata.
-
-![YouTube Shorts Uploader Screenshot](docs/images/app_screenshot.png)
+A headless YouTube Shorts uploader designed to run on a Raspberry Pi. This application allows you to schedule YouTube Shorts uploads and have them automatically uploaded at specified times, even when your main computer is off.
 
 ## Features
 
-- Upload videos to YouTube as Shorts
-- Automatically generate titles and descriptions using OpenAI
-- Analyze video content to improve metadata generation
-- Support for multiple YouTube accounts
-- Secure credential storage using system keychain or encrypted file storage
-- Video preview and basic editing functionality
-- **Schedule uploads** - Schedule multiple videos to upload at specified intervals
-- **Customizable AI style** - Use custom style prompts to control how AI generates titles and descriptions
+- Automated YouTube Shorts uploads on a schedule
+- Runs as a systemd service on Raspberry Pi
+- Easy file transfer from your main computer
+- Authentication with YouTube API
+- Upload status tracking and history
+- No GUI required - perfect for headless operation
 
-## Installation
+## System Requirements
+
+- Raspberry Pi (tested on Raspberry Pi 5 with 8GB RAM)
+- Raspberry Pi OS (64-bit recommended)
+- Internet connection
+- 50MB+ of free disk space (not including videos)
+- Python 3.7+
+
+## Setup Instructions
+
+### 1. On Your Development Computer
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/ddwyer77/youtube-upload-330-Pi.git
+   cd youtube-upload-330-Pi
+   ```
+
+2. Authenticate with YouTube (if you haven't already):
+   ```bash
+   python desktop_auth.py
+   ```
+   This will create a `token.pickle` file that stores your YouTube API credentials.
+
+3. Make sure both `token.pickle` and `client_secrets.json` files are in the repository root.
+
+### 2. On the Raspberry Pi
 
 1. Clone the repository:
+   ```bash
+   git clone https://github.com/ddwyer77/youtube-upload-330-Pi.git
+   cd youtube-upload-330-Pi
+   ```
+
+2. Run the setup script:
+   ```bash
+   chmod +x raspberry_pi_setup.sh
+   ./raspberry_pi_setup.sh
+   ```
+
+3. Transfer authentication files from your development computer:
+   ```bash
+   # On your development computer:
+   scp token.pickle pi@raspberrypi.local:~/youtube-upload-330-Pi/
+   scp client_secrets.json pi@raspberrypi.local:~/youtube-upload-330-Pi/
+   ```
+
+4. Start and enable the service:
+   ```bash
+   sudo systemctl start youtube-uploader.service
+   sudo systemctl enable youtube-uploader.service
+   ```
+
+## Usage
+
+### Transferring Videos and Scheduling Uploads
+
+Use the included transfer script to send videos to your Raspberry Pi and schedule them for upload:
+
 ```bash
-git clone https://github.com/your-username/youtube-shorts-uploader.git
-cd youtube-shorts-uploader
+# Transfer videos and schedule them
+python transfer_to_pi.py --videos video1.mp4 video2.mp4 --schedule --interval 6
+
+# Transfer videos with a specific start time and privacy setting
+python transfer_to_pi.py --videos video1.mp4 video2.mp4 --schedule --time "2025-04-01T12:00:00" --privacy public
+
+# Transfer authentication files 
+python transfer_to_pi.py --auth
+
+# Specify a different Raspberry Pi hostname or IP
+python transfer_to_pi.py --host 192.168.1.100 --videos video1.mp4
 ```
 
-2. Create a virtual environment:
+### Manually Editing the Schedule
+
+You can also manually edit the schedule on the Pi:
+
 ```bash
-python -m venv env
-source env/bin/activate  # On Windows: env\Scripts\activate
+# On the Raspberry Pi
+nano ~/.youtube_shorts_uploader/scheduled_uploads.json
 ```
 
-3. Install the dependencies:
-```bash
-pip install -r requirements.txt
+The schedule format is:
+```json
+{
+  "scheduled_uploads": [
+    {
+      "file_path": "/home/pi/videos/video1.mp4",
+      "title": "Amazing YouTube Short #1",
+      "description": "Check out this amazing YouTube short video!",
+      "tags": ["shorts", "youtube", "viral"],
+      "scheduled_time": "2025-04-01T12:00:00",
+      "privacy": "public"
+    }
+  ]
+}
 ```
 
-4. Run the application:
+### Monitoring Uploads
+
+Check the service status and logs:
+
 ```bash
-python run.py
+# Service status
+sudo systemctl status youtube-uploader.service
+
+# View logs
+tail -f ~/youtube_uploader_logs.txt
 ```
 
-## Configuration
+## Development
 
-1. Set up YouTube API credentials:
-   - Create a project in the [Google Cloud Console](https://console.cloud.google.com/)
-   - Enable the YouTube Data API v3
-   - Create OAuth 2.0 credentials
-   - Download the client secrets file and place it in the project directory
+### Adding New Features
 
-2. Add your OpenAI API key in the Settings tab for AI-powered metadata generation
+1. Make your changes to the codebase
+2. Push to GitHub
+3. Pull the changes on your Raspberry Pi:
+   ```bash
+   cd ~/youtube-upload-330-Pi
+   git pull
+   ```
+4. Restart the service:
+   ```bash
+   sudo systemctl restart youtube-uploader.service
+   ```
 
-3. Configure your YouTube accounts in the Accounts tab
+### Troubleshooting
 
-## Scheduled Uploads
-
-The application supports scheduled uploads, allowing you to:
-- Import a folder of videos and schedule them for upload
-- Specify the time interval between uploads
-- Automatically generate titles for all videos
-- Monitor and manage the upload queue
-
-See [SCHEDULING.md](SCHEDULING.md) for detailed instructions on using this feature.
-
-## Custom Style Prompts
-
-You can customize how the AI generates titles and descriptions:
-- Enter style instructions like "use a non-chalant manner" or "include slang terms"
-- Control tone, vocabulary, and writing style
-- Apply different styles for different types of content
-
-## Requirements
-
-- Python 3.8+
-- PyQt6
-- Google API Python Client
-- OpenAI API key (for AI-powered metadata generation)
-- YouTube Data API credentials
+- **Authentication issues:** Re-run the authentication on your desktop and transfer the new `token.pickle` file.
+- **Upload failures:** Check the logs for detailed error messages.
+- **Service not starting:** Verify Python dependencies are installed on the Pi.
+- **Connection issues:** Make sure your Raspberry Pi has a stable internet connection.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Built with Python and Google's YouTube Data API
+- Thanks to the PyQt team for the original GUI version 

@@ -1,0 +1,15 @@
+[Unit]
+Description=YouTube Shorts Uploader Service
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/youtube-upload-330-Pi
+ExecStart=/usr/bin/python3 /home/pi/youtube-upload-330-Pi/scheduler_service.py
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:/home/pi/youtube_uploader_output.log
+StandardError=append:/home/pi/youtube_uploader_error.log
+
+[Install]
+WantedBy=multi-user.target 

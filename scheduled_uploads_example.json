@@ -1,0 +1,28 @@
+{
+  "scheduled_uploads": [
+    {
+      "file_path": "/home/pi/videos/video1.mp4",
+      "title": "Amazing YouTube Short #1",
+      "description": "Check out this amazing YouTube short video! Don't forget to like and subscribe for more content like this.",
+      "tags": ["shorts", "youtube", "viral", "trending"],
+      "scheduled_time": "2025-04-01T12:00:00",
+      "privacy": "public"
+    },
+    {
+      "file_path": "/home/pi/videos/video2.mp4",
+      "title": "Epic YouTube Short #2",
+      "description": "Another amazing short video for your enjoyment! Like and subscribe for more content.",
+      "tags": ["shorts", "youtube", "viral", "trending"],
+      "scheduled_time": "2025-04-01T18:00:00",
+      "privacy": "public"
+    },
+    {
+      "file_path": "/home/pi/videos/video3.mp4",
+      "title": "Incredible YouTube Short #3",
+      "description": "You won't believe what happens in this short video! Like and subscribe for more amazing content.",
+      "tags": ["shorts", "youtube", "viral", "trending"],
+      "scheduled_time": "2025-04-02T12:00:00",
+      "privacy": "public"
+    }
+  ]
+} 

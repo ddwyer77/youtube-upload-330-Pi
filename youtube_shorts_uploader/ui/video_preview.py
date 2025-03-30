@@ -215,3 +215,16 @@ class VideoPreview(QWidget):
         minutes = seconds // 60
         seconds %= 60
         return f"{minutes:02}:{seconds:02}"
+        
+    def clear(self):
+        """
+        Clear the current video and reset the player state.
+        """
+        self.media_player.stop()
+        self.media_player.setSource(QUrl())
+        self.current_video_path = None
+        self.timeline_slider.setValue(0)
+        self.timeline_slider.setRange(0, 0)
+        self.time_label.setText("00:00 / 00:00")
+        self.play_button.setText("Play")
+        logger.info("Video preview cleared")
